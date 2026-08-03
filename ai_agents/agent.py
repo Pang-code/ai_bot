@@ -1,3 +1,5 @@
+from typing import Any
+
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
@@ -13,15 +15,17 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_agent(settings: Settings):
+def build_agent(settings: Settings, checkpointer: Any | None = None):
     model = ChatOpenAI(
         model=settings.model_name,
-        api_key=settings.api_key,
-        base_url=settings.base_url,
+        api_key=settings.model_api_key.get_secret_value(),
+        base_url=settings.model_base_url,
+        timeout=settings.model_timeout_seconds,
+        max_retries=settings.model_max_retries,
     )
     return create_agent(
         model=model,
         tools=TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        checkpointer=InMemorySaver(),
+        checkpointer=checkpointer or InMemorySaver(),
     )
