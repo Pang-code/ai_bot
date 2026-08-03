@@ -1,5 +1,7 @@
+import json
 import os
 from datetime import datetime
+from urllib.request import Request, urlopen
 
 from ddgs import DDGS
 from dotenv import load_dotenv
@@ -30,6 +32,46 @@ def web_search(query: str) -> str:
     )
 
 
+def _fetch_location(url: str) -> dict:
+    request = Request(url, headers={"User-Agent": "ai-agents/0.1"})
+    with urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+
+@tool
+def get_ip_location() -> str:
+    """通过公网 IP 获取大致位置；结果仅精确到国家、地区或城市，不是 GPS 定位。"""
+    services = {
+        "ipwho.is": "https://ipwho.is/",
+        "ipapi.co": "https://ipapi.co/json/",
+    }
+    locations = {}
+
+    for name, url in services.items():
+        try:
+            data = _fetch_location(url)
+            locations[name] = {
+                "ip": data.get("ip"),
+                "country": data.get("country") or data.get("country_name"),
+                "region": data.get("region"),
+                "city": data.get("city"),
+                "postal": data.get("postal"),
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "timezone": (
+                    data.get("timezone", {}).get("id")
+                    if isinstance(data.get("timezone"), dict)
+                    else data.get("timezone")
+                ),
+                "organization": data.get("connection", {}).get("org")
+                or data.get("org"),
+            }
+        except Exception as error:
+            locations[name] = {"error": f"{type(error).__name__}: {error}"}
+
+    return json.dumps(locations, ensure_ascii=False, indent=2)
+
+
 def main() -> None:
     load_dotenv()
 
@@ -48,10 +90,11 @@ def main() -> None:
     )
     agent = create_agent(
         model=model,
-        tools=[get_current_time, web_search],
+        tools=[get_current_time, web_search, get_ip_location],
         system_prompt=(
             "你是一个简洁、可靠的中文助手。遇到实时信息或不确定的外部知识时，"
-            "使用 web_search 搜索；回答时附上用到的来源链接。"
+            "使用 web_search 搜索并附上来源链接。仅在用户需要当前位置时调用 "
+            "get_ip_location，并说明 IP 定位可能不准确。"
         ),
         checkpointer=InMemorySaver(),
     )
