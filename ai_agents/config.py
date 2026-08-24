@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     model_name: str
     model_timeout_seconds: float = Field(default=60, gt=0)
     model_max_retries: int = Field(default=2, ge=0)
+
+    jwt_secret: SecretStr | None = None
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    jwt_access_token_minutes: int = Field(default=60, ge=5, le=1440)
+    jwt_issuer: str = "ai-agents-api"
+    jwt_audience: str = "ai-agents-frontend"
 
     database_url: str | None = None
     postgres_pool_min_size: int = Field(default=1, ge=1)
@@ -56,6 +62,11 @@ class Settings(BaseSettings):
         if not self.database_url:
             raise ValueError("启动 API 前请先在 .env 中填写 DATABASE_URL。")
         return self.database_url
+
+    def require_jwt_secret(self) -> str:
+        if self.jwt_secret is None or len(self.jwt_secret.get_secret_value()) < 32:
+            raise ValueError("JWT_SECRET 必须设置为至少 32 字符的随机密钥。")
+        return self.jwt_secret.get_secret_value()
 
     @property
     def cors_origins(self) -> list[str]:

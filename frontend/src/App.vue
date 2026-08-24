@@ -2,11 +2,22 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   checkHealth,
+  clearAuth,
   deleteSession,
+  getToken,
+  getTenantId,
   getSessionMessages,
+  listAuditEvents,
   listSessions,
+  listTenants,
+  login,
+  register,
+  resumeApproval,
   sendMessage,
+  setTenantId,
+  type AuditEvent,
   type SessionSummary,
+  type Tenant,
 } from './api/chat'
 import { renderMarkdown } from './utils/markdown'
 
@@ -46,6 +57,17 @@ const sessions = ref<SessionSummary[]>([])
 const isHistoryLoading = ref(false)
 const historyError = ref('')
 const isMobileHistoryOpen = ref(false)
+const authenticated = ref(Boolean(getToken()))
+const authMode = ref<'login' | 'register'>('login')
+const email = ref('')
+const password = ref('')
+const tenantName = ref('')
+const authError = ref('')
+const tenants = ref<Tenant[]>([])
+const currentTenantId = ref(getTenantId())
+const pendingApproval = ref<{ tool_name: string; description: string } | null>(null)
+const auditEvents = ref<AuditEvent[]>([])
+const showingAudit = ref(false)
 
 const currentSession = computed(() =>
   sessions.value.find((session) => session.session_id === sessionId.value),
@@ -66,6 +88,8 @@ watch(
 
 onMounted(async () => {
   isOnline.value = await checkHealth()
+  if (!authenticated.value) return
+  await loadTenants()
   await refreshSessions()
   if (sessionId.value && currentSession.value) {
     await openSession(currentSession.value)
@@ -73,6 +97,62 @@ onMounted(async () => {
   await nextTick()
   messageList.value?.scrollTo({ top: messageList.value.scrollHeight })
 })
+
+async function submitAuth() {
+  authError.value = ''
+  try {
+    if (authMode.value === 'register') {
+      await register(email.value, password.value, tenantName.value)
+    } else {
+      await login(email.value, password.value)
+    }
+    authenticated.value = true
+    await loadTenants()
+    await refreshSessions()
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : '认证失败'
+  }
+}
+
+async function loadTenants() {
+  tenants.value = await listTenants()
+  if (!tenants.value.some((item) => item.tenant_id === currentTenantId.value)) {
+    currentTenantId.value = tenants.value[0]?.tenant_id ?? ''
+    if (currentTenantId.value) setTenantId(currentTenantId.value)
+  }
+}
+
+async function switchTenant() {
+  setTenantId(currentTenantId.value)
+  startNewSession()
+  await refreshSessions()
+}
+
+function logout() {
+  clearAuth()
+  authenticated.value = false
+  tenants.value = []
+  startNewSession()
+}
+
+async function decideApproval(decision: 'approve' | 'reject') {
+  if (!sessionId.value) return
+  isLoading.value = true
+  try {
+    const response = await resumeApproval(sessionId.value, decision)
+    pendingApproval.value = response.pending_approval ?? null
+    if (response.answer) messages.value.push(createMessage('assistant', response.answer))
+  } catch (error) {
+    messages.value.push(createMessage('error', error instanceof Error ? error.message : '审批失败'))
+  } finally {
+    isLoading.value = false
+  }
+}
+
+async function openAudit() {
+  showingAudit.value = true
+  auditEvents.value = await listAuditEvents()
+}
 
 function createMessage(role: MessageRole, content: string): Message {
   return {
@@ -94,7 +174,8 @@ async function submitMessage(prompt?: string) {
     const response = await sendMessage(content, sessionId.value)
     sessionId.value = response.session_id
     localStorage.setItem(SESSION_KEY, response.session_id)
-    messages.value.push(createMessage('assistant', response.answer))
+    pendingApproval.value = response.pending_approval ?? null
+    if (response.answer) messages.value.push(createMessage('assistant', response.answer))
     isOnline.value = true
     await refreshSessions()
   } catch (error) {
@@ -189,7 +270,22 @@ async function copyMessage(message: Message) {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="!authenticated" class="auth-page">
+    <form class="auth-card" @submit.prevent="submitAuth">
+      <div class="brand-mark">A</div>
+      <h1>{{ authMode === 'login' ? '登录 Agent Console' : '创建账号与租户' }}</h1>
+      <input v-model="email" type="email" autocomplete="email" placeholder="邮箱" required />
+      <input v-model="password" type="password" minlength="8" autocomplete="current-password" placeholder="密码（至少 8 位）" required />
+      <input v-if="authMode === 'register'" v-model="tenantName" maxlength="120" placeholder="首个租户名称" required />
+      <p v-if="authError" class="auth-error">{{ authError }}</p>
+      <button type="submit">{{ authMode === 'login' ? '登录' : '注册' }}</button>
+      <button class="link-button" type="button" @click="authMode = authMode === 'login' ? 'register' : 'login'">
+        {{ authMode === 'login' ? '没有账号？注册' : '已有账号？登录' }}
+      </button>
+      <small>开发阶段令牌保存在 localStorage；生产环境应改用 Secure、HttpOnly Cookie。</small>
+    </form>
+  </div>
+  <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">A</div>
@@ -205,6 +301,17 @@ async function copyMessage(message: Message) {
         </svg>
         新建会话
       </button>
+      <select v-model="currentTenantId" class="tenant-select" @change="switchTenant">
+        <option v-for="tenant in tenants" :key="tenant.tenant_id" :value="tenant.tenant_id">
+          {{ tenant.name }} · {{ tenant.role }}
+        </option>
+      </select>
+      <button
+        v-if="tenants.find(t => t.tenant_id === currentTenantId)?.role !== 'member'"
+        class="secondary-button"
+        type="button"
+        @click="openAudit"
+      >审计日志</button>
 
       <button
         class="history-toggle"
@@ -271,6 +378,7 @@ async function copyMessage(message: Message) {
       <div class="sidebar-footer">
         <span class="status-dot" :class="{ online: isOnline }"></span>
         <span>{{ isOnline ? 'API 服务正常' : 'API 未连接' }}</span>
+        <button type="button" @click="logout">退出</button>
       </div>
     </aside>
 
@@ -347,6 +455,14 @@ async function copyMessage(message: Message) {
             </div>
           </div>
         </article>
+        <article v-if="pendingApproval" class="approval-card">
+          <strong>需要人工批准：{{ pendingApproval.tool_name }}</strong>
+          <p>{{ pendingApproval.description }}</p>
+          <div>
+            <button type="button" :disabled="isLoading" @click="decideApproval('approve')">批准</button>
+            <button type="button" :disabled="isLoading" @click="decideApproval('reject')">拒绝</button>
+          </div>
+        </article>
       </section>
 
       <footer class="composer-area">
@@ -374,5 +490,12 @@ async function copyMessage(message: Message) {
         <p>智能体可能会产生错误，请核对重要信息。</p>
       </footer>
     </main>
+    <div v-if="showingAudit" class="audit-drawer">
+      <header><h2>租户审计日志</h2><button type="button" @click="showingAudit = false">关闭</button></header>
+      <div v-for="event in auditEvents" :key="event.event_id" class="audit-event">
+        <strong>{{ event.action }}</strong><span>{{ event.status }}</span>
+        <time>{{ new Date(event.created_at).toLocaleString('zh-CN') }}</time>
+      </div>
+    </div>
   </div>
 </template>

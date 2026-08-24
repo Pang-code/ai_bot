@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 @dataclass(frozen=True)
 class SessionRecord:
     session_id: UUID
+    tenant_id: UUID
+    created_by: UUID
     title: str
     created_at: datetime
     updated_at: datetime
@@ -24,7 +26,8 @@ class MessageRecord:
 class SessionRepository(Protocol):
     async def ensure_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
         title: str,
     ) -> bool: ...
@@ -38,25 +41,29 @@ class SessionRepository(Protocol):
 
     async def list_sessions(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         limit: int = 100,
     ) -> list[SessionRecord]: ...
 
     async def get_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> SessionRecord | None: ...
 
     async def get_messages(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> list[MessageRecord] | None: ...
 
     async def delete_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> bool: ...
 
@@ -70,28 +77,31 @@ def make_session_title(message: str, max_length: int = 60) -> str:
 
 class InMemorySessionRepository:
     def __init__(self) -> None:
-        self._sessions: dict[UUID, tuple[UUID, SessionRecord]] = {}
+        self._sessions: dict[UUID, SessionRecord] = {}
         self._messages: dict[UUID, list[MessageRecord]] = {}
 
     async def ensure_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
         title: str,
     ) -> bool:
         existing = self._sessions.get(session_id)
         if existing:
-            return existing[0] == owner_id
+            return (
+                existing.tenant_id == tenant_id
+                and existing.created_by == created_by
+            )
 
         now = datetime.now(timezone.utc)
-        self._sessions[session_id] = (
-            owner_id,
-            SessionRecord(
-                session_id=session_id,
-                title=title,
-                created_at=now,
-                updated_at=now,
-            ),
+        self._sessions[session_id] = SessionRecord(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            created_by=created_by,
+            title=title,
+            created_at=now,
+            updated_at=now,
         )
         self._messages[session_id] = []
         return True
@@ -122,26 +132,27 @@ class InMemorySessionRepository:
                 ),
             ]
         )
-        owner_id, session = self._sessions[session_id]
-        self._sessions[session_id] = (
-            owner_id,
-            SessionRecord(
-                session_id=session.session_id,
-                title=session.title,
-                created_at=session.created_at,
-                updated_at=now,
-            ),
+        session = self._sessions[session_id]
+        self._sessions[session_id] = SessionRecord(
+            session_id=session.session_id,
+            tenant_id=session.tenant_id,
+            created_by=session.created_by,
+            title=session.title,
+            created_at=session.created_at,
+            updated_at=now,
         )
 
     async def list_sessions(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         limit: int = 100,
     ) -> list[SessionRecord]:
         sessions = [
             session
-            for session_owner, session in self._sessions.values()
-            if session_owner == owner_id
+            for session in self._sessions.values()
+            if session.tenant_id == tenant_id
+            and session.created_by == created_by
         ]
         return sorted(
             sessions,
@@ -151,31 +162,46 @@ class InMemorySessionRepository:
 
     async def get_messages(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> list[MessageRecord] | None:
         existing = self._sessions.get(session_id)
-        if not existing or existing[0] != owner_id:
+        if (
+            not existing
+            or existing.tenant_id != tenant_id
+            or existing.created_by != created_by
+        ):
             return None
         return list(self._messages[session_id])
 
     async def get_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> SessionRecord | None:
         existing = self._sessions.get(session_id)
-        if not existing or existing[0] != owner_id:
+        if (
+            not existing
+            or existing.tenant_id != tenant_id
+            or existing.created_by != created_by
+        ):
             return None
-        return existing[1]
+        return existing
 
     async def delete_session(
         self,
-        owner_id: UUID,
+        tenant_id: UUID,
+        created_by: UUID,
         session_id: UUID,
     ) -> bool:
         existing = self._sessions.get(session_id)
-        if not existing or existing[0] != owner_id:
+        if (
+            not existing
+            or existing.tenant_id != tenant_id
+            or existing.created_by != created_by
+        ):
             return False
         del self._sessions[session_id]
         del self._messages[session_id]
