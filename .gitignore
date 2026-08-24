@@ -11,3 +11,16 @@ wheels/
 
 # Local secrets
 .env
+
+# IDEs
+.idea/
+.vscode/
+
+# Logs
+logs/
+
+# Models
+models/
+
+# Tmp
+tmp/
