@@ -24,3 +24,6 @@ models/
 
 # Tmp
 tmp/
+rag_dir/doc/huawei_doc/md/
+*.log
+*.pid
