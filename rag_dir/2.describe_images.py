@@ -77,13 +77,13 @@ def build_context_map(md_dir: Path) -> dict[str, dict]:
 def build_prompt(doc_title: str, section: str, window: str) -> str:
     m = RE_PRODUCT.match(doc_title)
     product = m.group(1).strip() if m else doc_title
-    parts = [f"这是华为产品手册《{product}》中的一张插图。"]
+    parts = [f"这是文档《{product}》中的一张插图。"]
     if section:
         parts.append(f"它位于「{section}」章节。")
     if window:
         parts.append(f"图片所在位置的上下文：{window}")
     parts.append(
-        "请结合上下文，用简体中文描述这张图片展示的内容和它在手册中的作用，80字以内，"
+        "请结合上下文，用简体中文描述这张图片展示的内容和它在文档中的作用，80字以内，"
         "直接输出描述文字，不要任何前缀，不要提及具体产品型号。"
     )
     return " ".join(parts)
@@ -113,6 +113,7 @@ def replace_images_in_md(md_path: Path, descriptions: dict) -> tuple[int, int]:
     返回 (替换数, 跳过数)。
     """
     raw = md_path.read_text(encoding="utf-8")
+    raw = RE_TOC.sub("", raw)  # 与 build_context_map 一致: 目录章节不处理
     refs = [(m.start(), m.end(), m.group(1)) for m in RE_MD_IMAGE.finditer(raw)]
     refs += [(m.start(), m.end(), m.group(1)) for m in RE_HTML_IMAGE.finditer(raw)]
     refs.sort()
@@ -124,6 +125,8 @@ def replace_images_in_md(md_path: Path, descriptions: dict) -> tuple[int, int]:
         if not desc:
             skipped += 1
             continue
+        # 描述中的半角方括号会破坏 "[图片: 描述](路径)" 链接语法, 统一转全角
+        desc = desc.replace("[", "【").replace("]", "】")
         raw = raw[:start] + f"[图片: {desc}]({path})" + raw[end:]
         replaced += 1
     md_path.write_text(raw, encoding="utf-8")
