@@ -1,0 +1,27 @@
+services:
+  mineru-api:
+    build:
+      context: doc
+      dockerfile: Dockerfile
+    image: local/mineru-pipeline:3.4.1-cpu
+    container_name: mineru-api
+    restart: unless-stopped
+    ports:
+      # 宿主机 8000-8002 已被占用，使用 8080 对外提供服务。
+      - "8080:8000"
+    environment:
+      # 国内网络优先使用 ModelScope；模型会缓存在 mineru-home 卷中。
+      MINERU_MODEL_SOURCE: modelscope
+      MINERU_API_OUTPUT_ROOT: /data/output
+      MINERU_API_MAX_CONCURRENT_REQUESTS: "1"
+      MINERU_PROCESSING_WINDOW_SIZE: "8"
+      MINERU_PDF_RENDER_THREADS: "2"
+      MINERU_API_ENABLE_FASTAPI_DOCS: "true"
+    volumes:
+      - ./:/data/input:ro
+      - ./output:/data/output
+      - mineru-home:/root
+    shm_size: "4gb"
+
+volumes:
+  mineru-home:
