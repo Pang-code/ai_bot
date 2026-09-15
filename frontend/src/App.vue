@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   checkHealth,
   clearAuth,
@@ -86,7 +86,16 @@ watch(
   { deep: true },
 )
 
+function handleAuthExpired() {
+  authenticated.value = false
+  authMode.value = 'login'
+  authError.value = '登录已过期，请重新登录'
+  isLoading.value = false
+  pendingApproval.value = null
+}
+
 onMounted(async () => {
+  window.addEventListener('auth:expired', handleAuthExpired)
   isOnline.value = await checkHealth()
   if (!authenticated.value) return
   await loadTenants()
@@ -96,6 +105,10 @@ onMounted(async () => {
   }
   await nextTick()
   messageList.value?.scrollTo({ top: messageList.value.scrollHeight })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('auth:expired', handleAuthExpired)
 })
 
 async function submitAuth() {
