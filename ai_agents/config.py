@@ -36,6 +36,16 @@ class Settings(BaseSettings):
         "http://localhost:5173,http://127.0.0.1:5173"
     )
 
+    # RAG 知识库检索 (Milvus + 局域网 Ollama bge-m3)
+    rag_milvus_uri: str = "http://localhost:19530"
+    rag_collection: str = "rag_chunks"
+    rag_embed_url: str = "http://127.0.0.1:11434"  # 真实地址通过 .env 的 RAG_EMBED_URL 覆盖
+    rag_embed_model: str = "bge-m3"
+    rag_top_k: int = Field(default=5, ge=1, le=20)
+    rag_recall: int = Field(default=15, ge=1, le=50)  # 过召回量, 供去重和来源配额裁剪
+    rag_per_source_cap: int = Field(default=2, ge=1)  # 每个来源文档最多保留条数
+    rag_score_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: object) -> object:

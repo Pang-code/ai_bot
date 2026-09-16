@@ -90,6 +90,12 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ErrorResponse
+    // 已登录状态下收到 401: 令牌过期或失效, 清除本地凭据并通知界面回到登录页
+    if (response.status === 401 && token) {
+      clearAuth()
+      window.dispatchEvent(new Event('auth:expired'))
+      throw new Error('登录已过期，请重新登录')
+    }
     throw new Error(body.error?.message ?? `请求失败（HTTP ${response.status}）`)
   }
 
