@@ -203,8 +203,12 @@ def search_knowledge_base(query: str) -> str:
         logger.info('[RAG检索] query="%s" 无相关结果', query)
         return NO_MATCH_MESSAGE
 
-    detail = ", ".join(
-        f"{h['entity'].get('source', '?')}({h['distance']:.2f})" for h in hits
-    )
-    logger.info('[RAG检索] query="%s" 返回 %d 条: %s', query, len(hits), detail)
+    lines = [
+        f"  {i}. {h.get('entity', {}).get('source', '?')}"
+        f" #{str(h.get('id', '?')).rsplit('/', 1)[-1]}"
+        f" [{h.get('entity', {}).get('section', '?')}]"
+        f" ({h['distance']:.2f})"
+        for i, h in enumerate(hits, 1)
+    ]
+    logger.info('[RAG检索] query="%s" 返回 %d 条:\n%s', query, len(hits), "\n".join(lines))
     return format_hits(hits)

@@ -6,8 +6,9 @@ from ai_agents.tools import rag as rag_tool
 from ai_agents.tools.rag import format_hits, rank_hits, search_knowledge_base
 
 
-def _hit(score: float, text: str, source: str = "doc.md", product: str = "产品", section: str = "章节") -> dict:
+def _hit(score: float, text: str, source: str = "doc.md", product: str = "产品", section: str = "章节", id: str = "ds/doc.md/17") -> dict:
     return {
+        "id": id,
         "distance": score,
         "entity": {"text": text, "source": source, "product": product, "section": section},
     }
@@ -114,7 +115,8 @@ def test_tool_logs_retrieval_with_sources_and_scores(monkeypatch, caplog):
     import logging
 
     hits = [
-        _hit(0.72, "试用期提前三十天提出离职。", source="奥德-员工手册.md"),
+        _hit(0.72, "试用期提前三十天提出离职。", source="奥德-员工手册.md",
+             section="离职管理", id="common/奥德-员工手册.md/17"),
     ]
     monkeypatch.setattr(rag_tool, "retrieve_hits", lambda query: hits)
 
@@ -124,6 +126,8 @@ def test_tool_logs_retrieval_with_sources_and_scores(monkeypatch, caplog):
     record = caplog.records[-1]
     assert "离职提前几天" in record.getMessage()
     assert "奥德-员工手册.md" in record.getMessage()
+    assert "#17" in record.getMessage()  # chunk 编号(主键尾部)
+    assert "离职管理" in record.getMessage()  # 章节
     assert "0.72" in record.getMessage()
 
 
