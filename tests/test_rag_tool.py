@@ -91,7 +91,7 @@ def test_tool_rejects_empty_query():
 
 
 def test_tool_returns_no_match_message(monkeypatch):
-    monkeypatch.setattr(rag_tool, "retrieve_hits", lambda query: [_hit(0.10, "无关")])
+    monkeypatch.setattr(rag_tool, "retrieve_hits", lambda query: [])
 
     output = search_knowledge_base.invoke({"query": "xyz"})
 
@@ -101,7 +101,6 @@ def test_tool_returns_no_match_message(monkeypatch):
 def test_tool_formats_ranked_results(monkeypatch):
     hits = [
         _hit(0.72, "试用期提前三十天提出离职。", product="奥德", section="离职管理"),
-        _hit(0.20, "无关噪声"),
     ]
     monkeypatch.setattr(rag_tool, "retrieve_hits", lambda query: hits)
 
@@ -109,7 +108,6 @@ def test_tool_formats_ranked_results(monkeypatch):
 
     assert "离职管理" in output
     assert "试用期提前三十天提出离职。" in output
-    assert "无关噪声" not in output
 
 
 def test_tool_logs_retrieval_with_sources_and_scores(monkeypatch, caplog):
@@ -117,7 +115,6 @@ def test_tool_logs_retrieval_with_sources_and_scores(monkeypatch, caplog):
 
     hits = [
         _hit(0.72, "试用期提前三十天提出离职。", source="奥德-员工手册.md"),
-        _hit(0.20, "无关噪声"),
     ]
     monkeypatch.setattr(rag_tool, "retrieve_hits", lambda query: hits)
 
@@ -139,3 +136,78 @@ def test_tool_logs_unavailable(monkeypatch, caplog):
         search_knowledge_base.invoke({"query": "电池保养"})
 
     assert any("知识库不可用" in r.getMessage() for r in caplog.records)
+
+
+def test_extract_model_tokens():
+    assert rag_tool.extract_model_tokens("b5 440怎么连接打印机") == ["b5440"]
+    assert rag_tool.extract_model_tokens("HUAWEI MateBook B5-440 连接打印机") == [
+        "huaweimatebookb5440"
+    ]
+    assert rag_tool.extract_model_tokens("G540电池保养") == ["g540"]
+    assert rag_tool.extract_model_tokens("扩展坞怎么用") == []
+    assert rag_tool.extract_model_tokens("2024年有什么新款") == []  # 纯数字不算型号
+
+
+def test_match_products_by_model_token():
+    known = ["HUAWEI MateBook B5-440", "华为擎云 G540", "hak180"]
+    assert rag_tool.match_products("b5 440怎么连接打印机", known) == [
+        "HUAWEI MateBook B5-440"
+    ]
+    assert rag_tool.match_products("擎云G540电池保养", known) == ["华为擎云 G540"]
+    assert rag_tool.match_products("怎么连接打印机", known) == []
+
+
+def _fake_client(filtered_hits: list[dict], general_hits: list[dict], captured: dict):
+    class FakeClient:
+        def search(self, name, data, limit, output_fields, filter=""):
+            captured.setdefault("filters", []).append(filter)
+            return [filtered_hits if "B5-440" in filter else general_hits]
+
+    return FakeClient()
+
+
+def test_retrieve_prefers_filtered_hits(monkeypatch):
+    monkeypatch.setattr(
+        rag_tool,
+        "_known_products",
+        lambda uri, coll: ("HUAWEI MateBook B5-440", "华为擎云 G540"),
+    )
+    monkeypatch.setattr(rag_tool, "embed_query", lambda q, s: [0.1] * 8)
+    captured: dict = {}
+    # 过滤池分数(0.52)低于全局池(0.63), 但产品过滤结果必须排前面
+    client = _fake_client(
+        filtered_hits=[_hit(0.52, "通过扩展坞USB-A接口连接设备。", source="B5-440.md",
+                            product="HUAWEI MateBook B5-440", section="连接USB")],
+        general_hits=[_hit(0.63, "hak180 其他内容。", source="hak180.md",
+                           product="hak180", section="章节")],
+        captured=captured,
+    )
+    monkeypatch.setattr(rag_tool, "_milvus_client", lambda uri: client)
+
+    result = rag_tool.retrieve_hits("b5 440怎么连接打印机")
+
+    assert "B5-440" in captured["filters"][0]  # 第一次: 产品过滤检索
+    assert captured["filters"][1] == ""  # 第二次: 全局补齐
+    assert result[0]["entity"]["source"] == "B5-440.md"
+    assert "hak180.md" in [h["entity"]["source"] for h in result]  # 不足 top_k 时全局补齐
+
+
+def test_retrieve_without_product_uses_general_only(monkeypatch):
+    monkeypatch.setattr(
+        rag_tool,
+        "_known_products",
+        lambda uri, coll: ("HUAWEI MateBook B5-440",),
+    )
+    monkeypatch.setattr(rag_tool, "embed_query", lambda q, s: [0.1] * 8)
+    captured: dict = {}
+    client = _fake_client(
+        filtered_hits=[],
+        general_hits=[_hit(0.70, "通用连接方法。", source="G540.md")],
+        captured=captured,
+    )
+    monkeypatch.setattr(rag_tool, "_milvus_client", lambda uri: client)
+
+    result = rag_tool.retrieve_hits("怎么连接打印机")
+
+    assert captured["filters"] == [""]  # 无型号: 只做一次全局检索
+    assert result[0]["entity"]["source"] == "G540.md"

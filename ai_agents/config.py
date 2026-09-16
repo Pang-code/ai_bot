@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # RAG 知识库检索 (Milvus + 局域网 Ollama bge-m3)
     rag_milvus_uri: str = "http://localhost:19530"
     rag_collection: str = "rag_chunks"
-    rag_embed_url: str = "http://192.168.1.19:11434"
+    rag_embed_url: str = "http://127.0.0.1:11434"  # 真实地址通过 .env 的 RAG_EMBED_URL 覆盖
     rag_embed_model: str = "bge-m3"
     rag_top_k: int = Field(default=5, ge=1, le=20)
     rag_recall: int = Field(default=15, ge=1, le=50)  # 过召回量, 供去重和来源配额裁剪
