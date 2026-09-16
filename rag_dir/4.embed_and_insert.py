@@ -19,14 +19,18 @@ import time
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from pymilvus import DataType, MilvusClient
+
+# 真实服务地址(Ollama/Milvus)从根目录 .env 读取, 不硬编码在脚本里
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 BASE = Path(__file__).parent
 CHUNK_FILES = [BASE / "doc/huawei_doc/chunks.json", BASE / "doc/common/chunks.json"]
 
 MILVUS_URI = os.environ.get("MILVUS_URI", "http://localhost:19530")
 COLLECTION = os.environ.get("MILVUS_COLLECTION", "rag_chunks")
-EMBED_URL = os.environ.get("EMBED_URL", "http://192.168.1.19:11434/api/embed")
+EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:11434/api/embed")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 DIM = 1024  # bge-m3 输出维度
 BATCH = 16  # 局域网 CPU 机器跑 bge-m3, 64 条长文本会超 120s, 16 条稳妥
